@@ -1,0 +1,1 @@
+# Stratford Energy Response
