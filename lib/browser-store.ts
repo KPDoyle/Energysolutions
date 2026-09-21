@@ -1,19 +1,19 @@
 import {categories, Data, Evidence, gaps, Job, regions} from './domain';
 
-const KEY='stratford-energy-response-v1';
+const KEY='stratford-energy-response-oem-pilot-v2';
 const clean=(value:unknown,max=500)=>typeof value==='string'?value.trim().slice(0,max):'';
 const now=()=>new Date().toISOString();
 const uid=()=>crypto.randomUUID();
 
 function seed():Data {
   const campaigns=[
-    {id:'c-battery',name:'Battery assurance programme',manufacturer:'Example Energy OEM',equipment:'Residential battery system',procedure:'SER-BAT-01 · controlled replacement',fee:95,fieldCost:550,version:1},
+    {id:'c-battery',name:'National battery corrective-action pilot',manufacturer:'Example Energy OEM',equipment:'Residential battery system',procedure:'SER-BAT-03 · isolate, replace, commission and return',fee:95,fieldCost:550,version:3},
     {id:'c-inverter',name:'Inverter warranty programme',manufacturer:'Example Solar OEM',equipment:'Hybrid inverter',procedure:'SER-INV-02 · warranty exchange',fee:75,fieldCost:350,version:1}
   ];
   const partners=regions.map((region,i)=>({id:`p-${i}`,name:['Stratford Energy Field Team','South Coast Electrical','West Energy Services','Northern Energy Partners','Caledonia Electrical','Cymru Renewables'][i],region,capacity:[24,18,14,20,12,10][i],expiry:'2027-12-31',approved:i!==5,version:1}));
   const names=['Oak House','Willow Lodge','The Orchard','Cedar Cottage','Maple House','Meadow View','Brook House','The Cedars','Ash Lodge','Elm Cottage','Birch House','Rose Cottage','Hawthorn Lodge','The Paddock','Lime House','Yew Cottage','Pine Lodge','Hill View'];
-  const stages=['Exception','Verified','Scheduled','In progress','Awaiting review','Allocated'];
-  const jobs:Job[]=names.map((name,i)=>({id:`SER-${String(1001+i)}`,campaignId:i<13?'c-battery':'c-inverter',customer:`${name} (sample)`,postcode:['CV37 9AA','BN1 1AA','BS1 1AA','LS1 1AA','EH1 1AA','CF10 1AA'][i%6],region:regions[i%6],serial:`DEMO-${87000+i}`,replacement:['Verified','Awaiting review'].includes(stages[i%6])?`NEW-${99000+i}`:'',status:stages[i%6],priority:i%7===0?'High':'Standard',partnerId:i%6===5?'':`p-${i%6}`,appointment:i%6===5?'':`2026-10-${String(2+i%8).padStart(2,'0')}T09:00`,disposition:['Verified','Awaiting review'].includes(stages[i%6])?'Received at depot':'',returnRef:['Verified','Awaiting review'].includes(stages[i%6])?`RMA-${4100+i}`:'',note:'Fictional site for workflow demonstration.',exception:stages[i%6]==='Exception'?'Site access requires programme-manager review.':'',contactStage:i%3===0?'Appointment confirmed':i%3===1?'Contacted':'Not contacted',slaDue:`2026-10-${String(10+i%9).padStart(2,'0')}`,version:1}));
+  const stages=['Safety escalation','Verified','Scheduled','In progress','Awaiting review','Allocated','Awaiting parts','Exception'];
+  const jobs:Job[]=names.map((name,i)=>{const status=stages[i%stages.length];const completed=['Verified','Awaiting review'].includes(status);return {id:`SER-${String(1001+i)}`,campaignId:i<13?'c-battery':'c-inverter',customer:`${name} (sample)`,postcode:['CV37 9AA','BN1 1AA','BS1 1AA','LS1 1AA','EH1 1AA','CF10 1AA'][i%6],region:regions[i%6],serial:`DEMO-${87000+i}`,replacement:completed?`NEW-${99000+i}`:'',status,priority:i%7===0?'High':'Standard',partnerId:i%6===5?'':`p-${i%6}`,appointment:['Allocated'].includes(status)?'':`2026-10-${String(2+i%8).padStart(2,'0')}T09:00`,disposition:completed?'Received at depot':'',returnRef:completed?`RMA-${4100+i}`:'',note:'Fictional site for controlled workflow demonstration.',exception:status==='Safety escalation'?'Work stopped: isolation control requires programme review.':status==='Exception'?'Customer access requires programme-manager review.':'',contactStage:i%4===0?'Not contacted':i%3===0?'Appointment confirmed':'Contacted',slaDue:`2026-10-${String(6+i%9).padStart(2,'0')}`,version:1};});
   const evidence:Evidence[]=[];
   for(const job of jobs.filter(j=>['Verified','Awaiting review'].includes(j.status))) for(const category of categories) evidence.push({id:uid(),job_id:job.id,category,filename:`${job.id}-${category.toLowerCase().replaceAll(' ','-')}.txt`,mime:'text/plain',created:now()});
   return {campaigns,partners,jobs,evidence,events:jobs.slice(0,8).map((job,i)=>({id:uid(),job_id:job.id,action:['Programme record created','Customer appointment confirmed','Field evidence captured','Completion reviewed'][i%4],created:new Date(Date.now()-i*42*60*1000).toISOString()}))};
@@ -52,7 +52,9 @@ export function performAction(data:Data,op:string,v:any={},id?:string,version?:n
       Object.assign(job,{partnerId:v.partnerId||'',appointment:clean(v.appointment),replacement:clean(v.replacement,100),disposition:clean(v.disposition),returnRef:clean(v.returnRef),note:clean(v.note,3000)});if(job.status==='Allocated'&&job.appointment)job.status='Scheduled';bump(job);event(next,job.id,'Work pack updated');
     } else if(op==='start'){if(job.status!=='Scheduled')throw new Error('Schedule the work order first.');job.status='In progress';bump(job);event(next,job.id,'Field work started');
     } else if(op==='exception'){if(!clean(v.reason))throw new Error('Describe the exception.');job.status='Exception';job.exception=clean(v.reason,2000);bump(job);event(next,job.id,`Exception raised: ${job.exception}`);
-    } else if(op==='resolve'){if(job.status!=='Exception'||!clean(v.reason))throw new Error('A resolution note is required.');job.status=job.appointment?'Scheduled':'Allocated';job.exception='';bump(job);event(next,job.id,`Exception resolved: ${clean(v.reason,2000)}`);
+    } else if(op==='safety'){job.status='Safety escalation';job.exception=clean(v.reason,2000)||'Work stopped: safety control requires programme review.';bump(job);event(next,job.id,`Safety escalation: ${job.exception}`);
+    } else if(op==='parts'){job.status='Awaiting parts';job.exception='';bump(job);event(next,job.id,'Work paused awaiting approved replacement equipment');
+    } else if(op==='resolve'){if(!['Exception','Safety escalation','Awaiting parts'].includes(job.status)||!clean(v.reason))throw new Error('A resolution note is required.');job.status=job.appointment?'Scheduled':'Allocated';job.exception='';bump(job);event(next,job.id,`Exception resolved: ${clean(v.reason,2000)}`);
     } else if(op==='submit'||op==='approve'){
       if(op==='submit'&&!['In progress','Scheduled'].includes(job.status)||op==='approve'&&job.status!=='Awaiting review')throw new Error('This action is not available at the current stage.');
       const missing=gaps(job,next.evidence);if(missing.length)throw new Error(`Required before close-out: ${missing.join(', ')}`);job.status=op==='submit'?'Awaiting review':'Verified';bump(job);event(next,job.id,op==='submit'?'Evidence submitted for programme review':'Completion verified');
