@@ -1,0 +1,8 @@
+node_modules
+.next
+out
+*.tsbuildinfo
+.DS_Store
+.vercel
+upload
+stratford-response-preview.png
